@@ -1,11 +1,15 @@
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Leaf, Loader2, Sprout, Droplets, ThermometerSun, Wind, Cloud, CheckCircle2 } from "lucide-react";
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
+import { Leaf, Loader2, Sprout, Droplets, ThermometerSun, Wind, Cloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -13,23 +17,47 @@ interface PredictionFormProps {
   onPredictionComplete: () => void;
 }
 
+// Define the validation schema using Zod
+const predictionFormSchema = z.object({
+  crop: z.string().min(1, { message: "Please select a crop." }),
+  temperature: z.coerce.number({ required_error: "Temperature is required.", invalid_type_error: "Must be a number" }).min(-50, "Value seems too low").max(60, "Value seems too high"),
+  rainfall: z.coerce.number({ required_error: "Rainfall is required.", invalid_type_error: "Must be a number" }).min(0, "Cannot be negative"),
+  fertilizer: z.coerce.number({ required_error: "Fertilizer amount is required.", invalid_type_error: "Must be a number" }).min(0, "Cannot be negative"),
+  soil_ph: z.coerce.number({ required_error: "Soil pH is required.", invalid_type_error: "Must be a number" }).min(0, "Min pH is 0").max(14, "Max pH is 14"),
+  humidity: z.coerce.number({ required_error: "Humidity is required.", invalid_type_error: "Must be a number" }).min(0, "Min humidity is 0%").max(100, "Max humidity is 100%"),
+  nitrogen: z.coerce.number({ invalid_type_error: "Must be a number" }).min(0, "Cannot be negative").optional().or(z.literal("")).or(z.null()), // Allow empty string or null
+  phosphorus: z.coerce.number({ invalid_type_error: "Must be a number" }).min(0, "Cannot be negative").optional().or(z.literal("")).or(z.null()),
+  potassium: z.coerce.number({ invalid_type_error: "Must be a number" }).min(0, "Cannot be negative").optional().or(z.literal("")).or(z.null()),
+});
+
+// Infer the form data type from the schema
+type PredictionFormData = z.infer<typeof predictionFormSchema>;
+
 export const PredictionForm = ({ onPredictionComplete }: PredictionFormProps) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [selectedCrop, setSelectedCrop] = useState('');
-  const [formData, setFormData] = useState({
-    temperature: "",
-    rainfall: "",
-    fertilizer: "",
-    soil_ph: "",
-    humidity: "",
-    nitrogen: "",
-    phosphorus: "",
-    potassium: ""
+
+  // Initialize react-hook-form
+  const form = useForm<PredictionFormData>({
+    resolver: zodResolver(predictionFormSchema),
+    mode: "onChange", // Validate on change for better UX
+    defaultValues: {
+      crop: "",
+      temperature: undefined,
+      rainfall: undefined,
+      fertilizer: undefined,
+      soil_ph: undefined,
+      humidity: undefined,
+      nitrogen: "", // Use empty string for optional number inputs initially
+      phosphorus: "",
+      potassium: "",
+    },
   });
 
-  // Available crops for selection (expanded list from Crop-yield project)
-  const crops = [
+  const selectedCrop = form.watch("crop"); // Watch the crop value
+
+   // Available crops for selection (expanded list from Crop-yield project)
+   const crops = [
     { value: 'rice', label: 'Rice', icon: '🌾', category: 'Cereal' },
     { value: 'wheat', label: 'Wheat', icon: '🌾', category: 'Cereal' },
     { value: 'maize', label: 'Maize (Corn)', icon: '🌽', category: 'Cereal' },
@@ -62,67 +90,49 @@ export const PredictionForm = ({ onPredictionComplete }: PredictionFormProps) =>
   ];
 
   // Crop-specific optimal conditions (for reference)
-  const cropConditions = {
+  const cropConditions: Record<string, { temp: string; ph: string; rainfall: string }> = {
     rice: { temp: '20-27°C', ph: '5.0-6.5', rainfall: 'High' },
     wheat: { temp: '12-25°C', ph: '6.0-7.5', rainfall: 'Moderate' },
     maize: { temp: '21-27°C', ph: '5.5-7.0', rainfall: 'Moderate' },
     cotton: { temp: '21-30°C', ph: '5.5-8.0', rainfall: 'Moderate' },
     sugarcane: { temp: '21-27°C', ph: '6.0-7.5', rainfall: 'High' },
+    // Add others if needed
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (values: PredictionFormData) => {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke("predict-yield", {
-        body: {
-          crop: selectedCrop,
-          temperature: parseFloat(formData.temperature),
-          rainfall: parseFloat(formData.rainfall),
-          fertilizer: parseFloat(formData.fertilizer),
-          soil_ph: parseFloat(formData.soil_ph),
-          humidity: parseFloat(formData.humidity),
-          nitrogen: parseFloat(formData.nitrogen) || 0,
-          phosphorus: parseFloat(formData.phosphorus) || 0,
-          potassium: parseFloat(formData.potassium) || 0,
-        },
-      });
+      const payload = {
+          crop: values.crop,
+          temperature: values.temperature,
+          rainfall: values.rainfall,
+          fertilizer: values.fertilizer,
+          soil_ph: values.soil_ph,
+          humidity: values.humidity,
+          // Send 0 if optional NPK fields are empty/null/undefined
+          nitrogen: Number(values.nitrogen) || 0,
+          phosphorus: Number(values.phosphorus) || 0,
+          potassium: Number(values.potassium) || 0,
+      };
+      console.log("Sending payload:", payload);
+
+      const { data, error } = await supabase.functions.invoke("predict-yield", { body: payload });
 
       if (error) throw error;
 
       toast({
         title: "Prediction Complete!",
-        description: `Predicted crop: ${data.predicted_crop}`,
+        description: `Predicted crop: ${data.predicted_crop || 'N/A'}`,
       });
-
       onPredictionComplete();
+      form.reset(); // Reset form
 
-      // Reset form
-      setFormData({
-        temperature: "",
-        rainfall: "",
-        fertilizer: "",
-        soil_ph: "",
-        humidity: "",
-        nitrogen: "",
-        phosphorus: "",
-        potassium: ""
-      });
-      setSelectedCrop("");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Prediction error:", error);
       toast({
         title: "Prediction Failed",
-        description: "Unable to generate prediction. Please try again.",
+        description: error?.message || "Unable to generate prediction. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -142,183 +152,186 @@ export const PredictionForm = ({ onPredictionComplete }: PredictionFormProps) =>
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Crop Selection */}
-          <div className="space-y-2">
-            <Label htmlFor="crop" className="text-base font-semibold">
-              Select Crop to Predict *
-            </Label>
-            <Select value={selectedCrop} onValueChange={setSelectedCrop}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Choose a crop..." />
-              </SelectTrigger>
-              <SelectContent>
-                {crops.map((crop) => (
-                  <SelectItem key={crop.value} value={crop.value}>
-                    <span className="flex items-center gap-2">
-                      <span>{crop.icon}</span>
-                      <span>{crop.label}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6"> {/* Increased spacing */}
 
-          {/* Show optimal conditions if crop selected */}
-          {selectedCrop && cropConditions[selectedCrop] && (
-            <Alert className="bg-primary/5 border-primary/20">
-              <AlertDescription className="text-sm text-primary">
-                <strong>Optimal Conditions:</strong> Temp: {cropConditions[selectedCrop].temp},
-                pH: {cropConditions[selectedCrop].ph},
-                Rainfall: {cropConditions[selectedCrop].rainfall}
-              </AlertDescription>
-            </Alert>
-          )}
+            {/* Crop Selection */}
+            <FormField
+              control={form.control}
+              name="crop"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-base font-semibold">Select Crop to Predict *</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose a crop..." />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {crops.map((crop) => (
+                        <SelectItem key={crop.value} value={crop.value}>
+                          <span className="flex items-center gap-2">
+                            <span>{crop.icon}</span>
+                            <span>{crop.label}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-          {/* Soil Nutrients */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="nitrogen">Nitrogen (N) kg/ha</Label>
-              <Input
-                id="nitrogen"
-                name="nitrogen"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 120"
-                value={formData.nitrogen}
-                onChange={handleInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="phosphorus">Phosphorus (P) kg/ha</Label>
-              <Input
-                id="phosphorus"
-                name="phosphorus"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 60"
-                value={formData.phosphorus}
-                onChange={handleInputChange}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="potassium">Potassium (K) kg/ha</Label>
-              <Input
-                id="potassium"
-                name="potassium"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 80"
-                value={formData.potassium}
-                onChange={handleInputChange}
-              />
-            </div>
-          </div>
-
-          {/* Environmental Conditions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="temperature" className="flex items-center gap-2">
-                <ThermometerSun className="h-4 w-4" />
-                Temperature (°C)
-              </Label>
-              <Input
-                id="temperature"
-                name="temperature"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 25.5"
-                required
-                value={formData.temperature}
-                onChange={handleInputChange}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="rainfall" className="flex items-center gap-2">
-                <Cloud className="h-4 w-4" />
-                Rainfall (mm)
-              </Label>
-              <Input
-                id="rainfall"
-                name="rainfall"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 800"
-                required
-                value={formData.rainfall}
-                onChange={handleInputChange}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="fertilizer">Fertilizer (kg/hectare)</Label>
-              <Input
-                id="fertilizer"
-                name="fertilizer"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 120"
-                required
-                value={formData.fertilizer}
-                onChange={handleInputChange}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="soil_ph" className="flex items-center gap-2">
-                <Wind className="h-4 w-4" />
-                Soil pH
-              </Label>
-              <Input
-                id="soil_ph"
-                name="soil_ph"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 6.5"
-                required
-                min="0"
-                max="14"
-                value={formData.soil_ph}
-                onChange={handleInputChange}
-              />
-            </div>
-
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="humidity" className="flex items-center gap-2">
-                <Droplets className="h-4 w-4" />
-                Humidity (%)
-              </Label>
-              <Input
-                id="humidity"
-                name="humidity"
-                type="number"
-                step="0.01"
-                placeholder="e.g., 65"
-                required
-                min="0"
-                max="100"
-                value={formData.humidity}
-                onChange={handleInputChange}
-              />
-            </div>
-          </div>
-
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Predicting...
-              </>
-            ) : (
-              <>
-                <Sprout className="mr-2 h-4 w-4" />
-                Predict Yield
-              </>
+            {/* Optimal Conditions Alert */}
+            {selectedCrop && cropConditions[selectedCrop] && (
+              <Alert className="bg-primary/5 border-primary/20">
+                <AlertDescription className="text-sm text-primary">
+                  <strong>Optimal Conditions for {crops.find(c => c.value === selectedCrop)?.label}:</strong> Temp: {cropConditions[selectedCrop].temp},
+                  pH: {cropConditions[selectedCrop].ph},
+                  Rainfall: {cropConditions[selectedCrop].rainfall}
+                </AlertDescription>
+              </Alert>
             )}
-          </Button>
-        </form>
+
+            {/* Soil Nutrients Section */}
+            <div className="space-y-3">
+              <FormLabel className="text-base font-semibold">Soil Nutrients (Optional)</FormLabel>
+              <div className="grid grid-cols-3 gap-4 p-4 border rounded-md bg-background shadow-sm">
+                <FormField
+                  control={form.control}
+                  name="nitrogen"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel htmlFor="nitrogen">Nitrogen (N) kg/ha</FormLabel>
+                      <FormControl>
+                        <Input id="nitrogen" type="number" step="0.01" placeholder="e.g., 120" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="phosphorus"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel htmlFor="phosphorus">Phosphorus (P) kg/ha</FormLabel>
+                      <FormControl>
+                        <Input id="phosphorus" type="number" step="0.01" placeholder="e.g., 60" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="potassium"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel htmlFor="potassium">Potassium (K) kg/ha</FormLabel>
+                      <FormControl>
+                        <Input id="potassium" type="number" step="0.01" placeholder="e.g., 80" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
+            {/* Environmental Conditions Section */}
+            <div className="space-y-3">
+              <FormLabel className="text-base font-semibold">Environmental Conditions *</FormLabel>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-5 p-4 border rounded-md bg-background shadow-sm">
+                <FormField
+                  control={form.control}
+                  name="temperature"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel htmlFor="temperature" className="flex items-center gap-2"><ThermometerSun className="h-4 w-4 text-orange-500" />Temperature (°C)</FormLabel>
+                      <FormControl>
+                        <Input id="temperature" type="number" step="0.01" placeholder="e.g., 25.5" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                 <FormField
+                  control={form.control}
+                  name="rainfall"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel htmlFor="rainfall" className="flex items-center gap-2"><Cloud className="h-4 w-4 text-blue-500" />Rainfall (mm)</FormLabel>
+                      <FormControl>
+                        <Input id="rainfall" type="number" step="0.01" placeholder="e.g., 800" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                 <FormField
+                  control={form.control}
+                  name="fertilizer"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel htmlFor="fertilizer">Fertilizer (kg/ha)</FormLabel>
+                      <FormControl>
+                        <Input id="fertilizer" type="number" step="0.01" placeholder="e.g., 120" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                 <FormField
+                  control={form.control}
+                  name="soil_ph"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel htmlFor="soil_ph" className="flex items-center gap-2"><Wind className="h-4 w-4 text-gray-500" />Soil pH</FormLabel>
+                      <FormControl>
+                        <Input id="soil_ph" type="number" step="0.01" placeholder="e.g., 6.5" min="0" max="14" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                 <FormField
+                  control={form.control}
+                  name="humidity"
+                  render={({ field }) => (
+                    <FormItem className="md:col-span-2">
+                       <FormLabel htmlFor="humidity" className="flex items-center gap-2"><Droplets className="h-4 w-4 text-teal-500" />Humidity (%)</FormLabel>
+                      <FormControl>
+                        <Input id="humidity" type="number" step="0.01" placeholder="e.g., 65" min="0" max="100" {...field} value={field.value ?? ""} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full text-base py-3" // Slightly larger button
+              disabled={loading || !form.formState.isValid} // Disable if loading OR form is invalid
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                  Predicting...
+                </>
+              ) : (
+                <>
+                  <Sprout className="mr-2 h-5 w-5" />
+                  Predict Yield
+                </>
+              )}
+            </Button>
+          </form>
+        </Form>
       </CardContent>
     </Card>
   );

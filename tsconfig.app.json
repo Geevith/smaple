@@ -15,11 +15,11 @@
     "jsx": "react-jsx",
 
     /* Linting */
-    "strict": false,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
-    "noImplicitAny": false,
-    "noFallthroughCasesInSwitch": false,
+    "strict": true,             // Enable stricter type-checking
+    "noUnusedLocals": true,     // Warn on unused local variables
+    "noUnusedParameters": true, // Warn on unused function parameters
+    "noImplicitAny": true,      // Require types when not inferred
+    "noFallthroughCasesInSwitch": true, // Prevent accidental fallthroughs
 
     "baseUrl": ".",
     "paths": {

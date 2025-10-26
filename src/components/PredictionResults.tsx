@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { TrendingUp, Award } from "lucide-react";
+import EnhancedVisualization from "@/components/EnhancedVisualization"; // Import the enhanced component
 
 interface Prediction {
   id: string;
@@ -13,11 +14,15 @@ interface Prediction {
   fertilizer: number;
   soil_ph: number;
   humidity: number;
+  nitrogen: number;
+  phosphorus: number;
+  potassium: number;
   predicted_crop: string;
   predicted_yield_lr: number;
   predicted_yield_rf: number;
   best_model: string;
   created_at: string;
+  feature_importances: string; // JSON string
 }
 
 interface ModelMetrics {
@@ -25,6 +30,8 @@ interface ModelMetrics {
   r2_score: number;
   mae: number;
   rmse: number;
+  evaluation_method: string;
+  tuned_parameters: string;
 }
 
 interface PredictionResultsProps {
@@ -34,6 +41,8 @@ interface PredictionResultsProps {
 export const PredictionResults = ({ refreshTrigger }: PredictionResultsProps) => {
   const [latestPrediction, setLatestPrediction] = useState<Prediction | null>(null);
   const [modelMetrics, setModelMetrics] = useState<ModelMetrics[]>([]);
+  // Add state for feature importances if returned by the backend
+  const [featureImportances, setFeatureImportances] = useState<Record<string, number> | null>(null);
 
   useEffect(() => {
     fetchLatestPrediction();
@@ -50,6 +59,10 @@ export const PredictionResults = ({ refreshTrigger }: PredictionResultsProps) =>
 
     if (data && !error) {
       setLatestPrediction(data);
+      // Parse feature importances if available
+      if (data.feature_importances) {
+        setFeatureImportances(JSON.parse(data.feature_importances));
+      }
     }
   };
 
@@ -92,64 +105,18 @@ export const PredictionResults = ({ refreshTrigger }: PredictionResultsProps) =>
 
   return (
     <div className="space-y-6">
-      {/* Prediction Results */}
-      <Card className="border-primary/20">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-primary">
-            <TrendingUp className="h-6 w-6" />
-            Latest Prediction Results
-          </CardTitle>
-          <CardDescription>
-            Predicted on {new Date(latestPrediction.created_at).toLocaleString()}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">Predicted Crop</p>
-              <p className="text-2xl font-bold text-primary">{latestPrediction.predicted_crop}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">LR Yield (kg/ha)</p>
-              <p className="text-2xl font-bold">{latestPrediction.predicted_yield_lr.toFixed(2)}</p>
-            </div>
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">RF Yield (kg/ha)</p>
-              <p className="text-2xl font-bold">{latestPrediction.predicted_yield_rf.toFixed(2)}</p>
-            </div>
-          </div>
+      <EnhancedVisualization
+        prediction={latestPrediction}
+        modelMetrics={modelMetrics}
+        featureImportances={featureImportances} // Pass importances
+      />
 
-          <div className="flex items-center gap-2">
-            <Award className="h-5 w-5 text-accent" />
-            <span className="text-sm font-medium">Best Model:</span>
-            <Badge variant={latestPrediction.best_model === "Random Forest" ? "default" : "secondary"}>
-              {latestPrediction.best_model}
-            </Badge>
-          </div>
-
-          {/* Yield Comparison Chart */}
-          <div className="mt-6">
-            <h3 className="text-lg font-semibold mb-4">Yield Comparison</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                <XAxis dataKey="name" />
-                <YAxis label={{ value: 'Yield (kg/hectare)', angle: -90, position: 'insideLeft' }} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="yield" fill="hsl(var(--chart-1))" name="Predicted Yield" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Model Performance Metrics */}
+      {/* Optional: Keep the simpler Model Performance Metrics table as well */}
       {modelMetrics.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Model Performance Metrics</CardTitle>
-            <CardDescription>Latest training results</CardDescription>
+            <CardTitle>Model Performance Metrics Summary</CardTitle>
+            <CardDescription>Latest training results overview</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -159,19 +126,27 @@ export const PredictionResults = ({ refreshTrigger }: PredictionResultsProps) =>
                   <TableHead>R² Score</TableHead>
                   <TableHead>MAE</TableHead>
                   <TableHead>RMSE</TableHead>
+                  <TableHead>Evaluation Method</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {modelMetrics.map((metric) => (
                   <TableRow key={metric.model_name}>
                     <TableCell className="font-medium">{metric.model_name}</TableCell>
-                    <TableCell>{metric.r2_score.toFixed(4)}</TableCell>
-                    <TableCell>{metric.mae.toFixed(4)}</TableCell>
-                    <TableCell>{metric.rmse.toFixed(4)}</TableCell>
+                    <TableCell>{metric.r2_score?.toFixed(4) ?? 'N/A'}</TableCell>
+                    <TableCell>{metric.mae?.toFixed(2) ?? 'N/A'}</TableCell>
+                    <TableCell>{metric.rmse?.toFixed(2) ?? 'N/A'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{metric.evaluation_method ?? 'N/A'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            {/* Optionally display tuned parameters */}
+            {modelMetrics.find(m => m.model_name === 'Random Forest' && m.tuned_parameters) && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Best RF Params: {modelMetrics.find(m => m.model_name === 'Random Forest')?.tuned_parameters}
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
