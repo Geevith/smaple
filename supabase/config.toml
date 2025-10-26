@@ -1,0 +1,7 @@
+project_id = "ohivugqhbjdrsrhchhlx"
+
+[functions.generate-dataset]
+verify_jwt = false
+
+[functions.predict-yield]
+verify_jwt = false
